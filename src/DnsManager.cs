@@ -82,16 +82,25 @@ namespace FastSwitchDNS
         static bool SameSet(IEnumerable<string> a, IEnumerable<string> b) =>
             new HashSet<string>(a, StringComparer.OrdinalIgnoreCase).SetEquals(b);
 
-        /// <summary>Sets DNS servers on an adapter; null or empty <paramref name="servers"/> restores DHCP.</summary>
-        public static void Apply(AdapterInfo n, string[] servers)
+        /// <summary>
+        /// Sets DNS servers on an adapter; null or empty <paramref name="servers"/> restores DHCP.
+        /// With <paramref name="dohTemplate"/> the servers are also switched to DNS over HTTPS;
+        /// without it any DoH settings on the adapter are removed.
+        /// </summary>
+        public static void Apply(AdapterInfo n, string[] servers, string dohTemplate = null, bool allowFallback = false)
         {
             servers ??= new string[0];
             var preset = new DnsPreset { Servers = servers };
+            var v4 = preset.V4.ToArray();
+            var v6 = n.SupportsIPv6 ? preset.V6.ToArray() : new string[0];
             var errors = new List<string>();
 
-            SetFamily(n.Name, "ipv4", preset.V4.ToArray(), errors);
+            SetFamily(n.Name, "ipv4", v4, errors);
             if (n.SupportsIPv6)
-                SetFamily(n.Name, "ipv6", preset.V6.ToArray(), errors);
+                SetFamily(n.Name, "ipv6", v6, errors);
+
+            if (errors.Count == 0)
+                ConfigureDoh(n, v4, v6, dohTemplate, allowFallback, errors);
 
             if (errors.Count > 0)
                 throw new Exception($"{n.Name}: {string.Join(" ", errors)}");
@@ -121,6 +130,76 @@ namespace FastSwitchDNS
                     return;
                 }
             }
+        }
+
+        const string DnscacheInterfaces = @"SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters";
+
+        /// <summary>Per-adapter DoH settings key, the same one the Windows Settings app writes.</summary>
+        public static string DohKey(AdapterInfo n, bool v6) =>
+            $@"{DnscacheInterfaces}\{n.Id}\DohInterfaceSettings\{(v6 ? "Doh6" : "Doh")}";
+
+        /// <summary>DohFlags = 1: encrypt using the template registered for this server address.</summary>
+        public const long DohFlagAutoTemplate = 1;
+
+        static void ConfigureDoh(AdapterInfo n, string[] v4, string[] v6, string template, bool allowFallback,
+            List<string> errors)
+        {
+            try
+            {
+                Env.Registry.DeleteKeyTree(RegistryHive.LocalMachine, DohKey(n, false));
+                Env.Registry.DeleteKeyTree(RegistryHive.LocalMachine, DohKey(n, true));
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex.Message);
+                return;
+            }
+            if (string.IsNullOrEmpty(template)) return;
+
+            foreach (var (servers, v6Family) in new[] { (v4, false), (v6, true) })
+            foreach (var ip in servers)
+            {
+                var error = RegisterTemplate(ip, template, allowFallback);
+                if (error != null)
+                {
+                    errors.Add(error);
+                    continue;
+                }
+                try
+                {
+                    Env.Registry.SetValue(RegistryHive.LocalMachine, $@"{DohKey(n, v6Family)}\{ip}", "DohFlags",
+                        DohFlagAutoTemplate, RegistryValueKind.QWord);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add(ex.Message);
+                }
+            }
+        }
+
+        /// <summary>Adds (or updates) the system-wide DoH template for a server. Returns the error text, or null.</summary>
+        public static string RegisterTemplate(string ip, string template, bool allowFallback)
+        {
+            var options = $"server={ip} dohtemplate={template} autoupgrade=yes udpfallback={(allowFallback ? "yes" : "no")}";
+            var (code, _) = Run("netsh.exe", $"dns add encryption {options}");
+            if (code == 0) return null;
+            // Windows already knows the big providers, so "add" fails for them: update instead
+            var (setCode, setOutput) = Run("netsh.exe", $"dns set encryption {options}");
+            return setCode == 0 ? null : $"DoH {ip}: {setOutput.Trim()}";
+        }
+
+        /// <summary>True when the adapter's current DNS servers are set to DNS over HTTPS.</summary>
+        public static bool IsDohActive(AdapterInfo n)
+        {
+            foreach (var v6 in new[] { false, true })
+            {
+                var servers = StaticServers(n, v6);
+                if (servers.Length == 0) continue;
+                return servers.Any(ip =>
+                    Env.Registry.GetValue(RegistryHive.LocalMachine, $@"{DohKey(n, v6)}\{ip}", "DohFlags") is long flags &&
+                    flags != 0);
+            }
+            return false;
         }
 
         public static void FlushCache() => Run("ipconfig.exe", "/flushdns");

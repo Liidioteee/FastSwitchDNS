@@ -71,11 +71,11 @@ namespace FastSwitchDNS
         }
 
         /// <summary>Tray tooltip, cut to the 63-character NotifyIcon limit.</summary>
-        internal static string StatusText(AdapterInfo adapter, DnsPreset preset)
+        internal static string StatusText(AdapterInfo adapter, DnsPreset preset, bool doh = false)
         {
             var text = adapter == null
                 ? $"FastSwitchDNS\n{L.NoAdapters}"
-                : $"DNS: {preset?.Name ?? L.AutoShort}\n{adapter.Name}";
+                : $"DNS: {preset?.Name ?? L.AutoShort}{(doh ? " · " + L.Doh : "")}\n{adapter.Name}";
             return text.Length > 63 ? text.Substring(0, 63) : text;
         }
 
@@ -86,7 +86,7 @@ namespace FastSwitchDNS
             {
                 var (adapter, preset) = CurrentState(Presets.All());
                 SetIcon(preset);
-                tray.Text = StatusText(adapter, preset);
+                tray.Text = StatusText(adapter, preset, adapter != null && preset != null && DnsManager.IsDohActive(adapter));
             }
             catch
             {
@@ -111,9 +111,10 @@ namespace FastSwitchDNS
             var presets = Presets.All();
             var (adapter, active) = CurrentState(presets);
 
+            bool dohActive = adapter != null && active != null && DnsManager.IsDohActive(adapter);
             var header = new ToolStripMenuItem(adapter == null
                 ? L.NoAdapters
-                : $"{adapter.Name}: {active?.Name ?? L.AutoShort}") { Enabled = false };
+                : $"{adapter.Name}: {active?.Name ?? L.AutoShort}{(dohActive ? " · " + L.Doh : "")}") { Enabled = false };
             menu.Items.Add(header);
             if (active != null && !presets.Contains(active))
                 menu.Items.Add(new ToolStripMenuItem(string.Join(", ", active.Servers)) { Enabled = false });
@@ -135,7 +136,9 @@ namespace FastSwitchDNS
                 var item = new ToolStripMenuItem(p.Name)
                 {
                     Checked = active == p,
-                    ShortcutKeyDisplayString = p.V4.FirstOrDefault() ?? p.Servers.FirstOrDefault(),
+                    ShortcutKeyDisplayString = (p.V4.FirstOrDefault() ?? p.Servers.FirstOrDefault()) +
+                                               (p.HasDoh && Settings.DohEnabled ? " · " + L.Doh : ""),
+                    ToolTipText = p.HasDoh ? p.DohTemplate : null,
                     Image = Swatch(IconFactory.ColorFor(p)),
                 };
                 item.Click += (s, e) => _ = Switch(preset);
@@ -162,6 +165,18 @@ namespace FastSwitchDNS
 
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(BuildAdapterMenu());
+
+            var doh = new ToolStripMenuItem(L.DohToggle) { Checked = Settings.DohEnabled };
+            doh.Click += (s, e) => { Settings.DohEnabled = !Settings.DohEnabled; _ = Reapply(active, presets); };
+            menu.Items.Add(doh);
+
+            var fallback = new ToolStripMenuItem(L.DohFallback)
+            {
+                Checked = Settings.DohFallback,
+                Enabled = Settings.DohEnabled,
+            };
+            fallback.Click += (s, e) => { Settings.DohFallback = !Settings.DohFallback; _ = Reapply(active, presets); };
+            menu.Items.Add(fallback);
 
             var flush = new ToolStripMenuItem(L.FlushCache);
             flush.Click += (s, e) =>
@@ -219,6 +234,10 @@ namespace FastSwitchDNS
             return bmp;
         }
 
+        /// <summary>After a DoH setting changes, re-applies the active preset so the change takes effect now.</summary>
+        internal Task Reapply(DnsPreset active, List<DnsPreset> presets) =>
+            active != null && presets.Contains(active) && active.HasDoh ? Switch(active) : Task.CompletedTask;
+
         internal async Task AddCustom()
         {
             var answer = AskCustom();
@@ -229,12 +248,13 @@ namespace FastSwitchDNS
         }
 
         /// <summary>Applies <paramref name="preset"/> (null = DHCP) to every target adapter; returns the errors, or null.</summary>
-        internal static string ApplyToAll(IEnumerable<AdapterInfo> targets, DnsPreset preset)
+        internal static string ApplyToAll(IEnumerable<AdapterInfo> targets, DnsPreset preset, bool doh, bool allowFallback)
         {
+            var template = doh && preset != null && preset.HasDoh ? preset.DohTemplate : null;
             var errors = new List<string>();
             foreach (var t in targets)
             {
-                try { DnsManager.Apply(t, preset?.Servers); }
+                try { DnsManager.Apply(t, preset?.Servers, template, allowFallback); }
                 catch (Exception ex) { errors.Add(ex.Message); }
             }
             DnsManager.FlushCache();
@@ -247,8 +267,9 @@ namespace FastSwitchDNS
             busy = true;
             tray.Text = L.Applying;
             var targets = DnsManager.Targets(Settings.AdapterId);
+            bool doh = Settings.DohEnabled, fallback = Settings.DohFallback;
 
-            var error = await Task.Run(() => ApplyToAll(targets, preset));
+            var error = await Task.Run(() => ApplyToAll(targets, preset, doh, fallback));
 
             busy = false;
             currentIconKey = null; // force redraw
@@ -258,7 +279,7 @@ namespace FastSwitchDNS
                 ShowError(error);
             else
                 Notify("FastSwitchDNS",
-                    $"DNS: {preset?.Name ?? L.Auto}\n{string.Join(", ", targets.Select(t => t.Name))}", false);
+                    $"DNS: {preset?.Name ?? L.Auto}{(doh && preset?.HasDoh == true ? " · " + L.Doh : "")}\n{string.Join(", ", targets.Select(t => t.Name))}", false);
         }
 
         void Notify(string title, string text, bool error)

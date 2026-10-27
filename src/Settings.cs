@@ -14,6 +14,20 @@ namespace FastSwitchDNS
             set => Env.Registry.SetValue(RegistryHive.CurrentUser, Key, "Adapter", value ?? "", RegistryValueKind.String);
         }
 
+        /// <summary>Use DNS over HTTPS for presets that have a template (on by default).</summary>
+        public static bool DohEnabled
+        {
+            get => GetFlag("Doh", true);
+            set => SetFlag("Doh", value);
+        }
+
+        /// <summary>Allow plain DNS when the DoH server does not answer (off by default: encrypted only).</summary>
+        public static bool DohFallback
+        {
+            get => GetFlag("DohFallback", false);
+            set => SetFlag("DohFallback", value);
+        }
+
         static bool GetFlag(string name, bool fallback) =>
             Env.Registry.GetValue(RegistryHive.CurrentUser, Key, name) is int v ? v != 0 : fallback;
 

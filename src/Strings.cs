@@ -25,6 +25,9 @@ namespace FastSwitchDNS
         public static string Autostart => T("Запускать при входе в Windows", "Run at Windows logon");
         public static string Exit => T("Выход", "Exit");
         public static string Applying => T("Применяю…", "Applying…");
+        public static string Doh => "DoH";
+        public static string DohToggle => T("Шифрование DNS (DoH)", "Encrypted DNS (DoH)");
+        public static string DohFallback => T("Без шифрования, если DoH не отвечает", "Allow unencrypted if DoH fails");
         public static string Error => T("Ошибка", "Error");
 
         public static string DialogTitle => T("Свой DNS", "Custom DNS");
@@ -32,6 +35,11 @@ namespace FastSwitchDNS
         public static string PrimaryLabel => T("Основной DNS:", "Primary DNS:");
         public static string SecondaryLabel => T("Дополнительный:", "Secondary:");
         public static string ExtraLabel => T("Ещё (IPv6 и др., через запятую):", "More (IPv6 etc., comma separated):");
+        public static string DohLabel => T("Шаблон DoH:", "DoH template:");
+        public static string DohHint => T("https://… (необязательно)", "https://… (optional)");
+        public static string BadTemplate(string s) => T(
+            $"Неверный шаблон DoH: {s}\nНужен адрес вида https://dns.example.com/dns-query",
+            $"Invalid DoH template: {s}\nUse an address like https://dns.example.com/dns-query");
         public static string SaveAndApply => T("Сохранить и применить", "Save and apply");
         public static string SaveOnly => T("Сохранить", "Save");
         public static string Cancel => T("Отмена", "Cancel");
