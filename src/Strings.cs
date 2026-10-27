@@ -5,7 +5,10 @@ namespace FastSwitchDNS
     /// <summary>UI strings: Russian when the system UI language is Russian, English otherwise.</summary>
     static class L
     {
-        static readonly bool Ru = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
+        /// <summary>Overrides the UI culture (tests); null means the system UI language.</summary>
+        public static CultureInfo Culture;
+
+        static bool Ru => (Culture ?? CultureInfo.CurrentUICulture).TwoLetterISOLanguageName == "ru";
 
         static string T(string ru, string en) => Ru ? ru : en;
 

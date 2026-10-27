@@ -35,8 +35,7 @@ namespace FastSwitchDNS
         static DnsPreset Make(string name, params string[] servers) =>
             new DnsPreset { Name = name, Servers = servers, BuiltIn = true };
 
-        static string Dir => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FastSwitchDNS");
+        static string Dir => Env.DataDir;
 
         /// <summary>User presets, one per line: "Name = server1, server2, ..."</summary>
         static string CustomFile => Path.Combine(Dir, "custom-dns.txt");

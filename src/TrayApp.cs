@@ -6,23 +6,37 @@ using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using Microsoft.Win32;
 
 namespace FastSwitchDNS
 {
     class TrayApp : ApplicationContext
     {
-        const string SettingsKey = @"Software\FastSwitchDNS";
-
         readonly NotifyIcon tray = new NotifyIcon();
         readonly ContextMenuStrip menu = new ContextMenuStrip();
         readonly Timer refreshTimer = new Timer { Interval = 15000 };
+        readonly bool live;
         Icon currentIcon;
         string currentIconKey;
         bool busy;
 
-        public TrayApp()
+        /// <summary>Opens the "add custom DNS" dialog; tests replace it.</summary>
+        internal Func<(DnsPreset preset, bool applyNow)?> AskCustom = () =>
         {
+            using var form = new AddDnsForm();
+            return form.ShowDialog() == DialogResult.OK ? (form.Result, form.ApplyNow) : ((DnsPreset, bool)?)null;
+        };
+
+        /// <summary>Last balloon shown: (title, text, isError). For tests and diagnostics.</summary>
+        internal (string title, string text, bool error) LastNotice { get; private set; }
+
+        internal ContextMenuStrip Menu => menu;
+        internal string TrayText => tray.Text;
+        internal Icon TrayIcon => tray.Icon;
+
+        /// <param name="live">false creates the app without showing the icon or listening for network changes (tests).</param>
+        public TrayApp(bool live = true)
+        {
+            this.live = live;
             menu.Opening += (s, e) => { BuildMenu(); e.Cancel = false; };
             menu.Items.Add("…"); // ContextMenuStrip won't open while empty
 
@@ -35,47 +49,44 @@ namespace FastSwitchDNS
                         ?.Invoke(tray, null);
             };
 
-            NetworkChange.NetworkAddressChanged += (s, e) => menu.BeginInvoke((Action)RefreshStatus);
-            refreshTimer.Tick += (s, e) => RefreshStatus();
-            refreshTimer.Start();
+            if (live)
+            {
+                NetworkChange.NetworkAddressChanged += OnNetworkChanged;
+                refreshTimer.Tick += (s, e) => RefreshStatus();
+                refreshTimer.Start();
+                menu.CreateControl(); // create a handle so BeginInvoke works before the first opening
+            }
 
-            menu.CreateControl(); // create a handle so BeginInvoke works before the first opening
             RefreshStatus();
-            tray.Visible = true;
+            tray.Visible = live;
         }
 
-        static string SelectedAdapterId
-        {
-            get
-            {
-                using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
-                return key?.GetValue("Adapter") as string ?? "";
-            }
-            set
-            {
-                using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
-                key.SetValue("Adapter", value ?? "");
-            }
-        }
+        void OnNetworkChanged(object sender, EventArgs e) => menu.BeginInvoke((Action)RefreshStatus);
 
         /// <summary>Returns the primary target adapter and the DNS preset currently set on it.</summary>
-        (NetworkInterface adapter, DnsPreset preset) CurrentState(List<DnsPreset> presets)
+        static (AdapterInfo adapter, DnsPreset preset) CurrentState(List<DnsPreset> presets)
         {
-            var target = DnsManager.Targets(SelectedAdapterId).FirstOrDefault();
+            var target = DnsManager.Targets(Settings.AdapterId).FirstOrDefault();
             return (target, target == null ? null : DnsManager.Detect(target, presets));
         }
 
-        void RefreshStatus()
+        /// <summary>Tray tooltip, cut to the 63-character NotifyIcon limit.</summary>
+        internal static string StatusText(AdapterInfo adapter, DnsPreset preset)
+        {
+            var text = adapter == null
+                ? $"FastSwitchDNS\n{L.NoAdapters}"
+                : $"DNS: {preset?.Name ?? L.AutoShort}\n{adapter.Name}";
+            return text.Length > 63 ? text.Substring(0, 63) : text;
+        }
+
+        internal void RefreshStatus()
         {
             if (busy) return;
             try
             {
                 var (adapter, preset) = CurrentState(Presets.All());
                 SetIcon(preset);
-                var text = adapter == null
-                    ? $"FastSwitchDNS\n{L.NoAdapters}"
-                    : $"DNS: {preset?.Name ?? L.AutoShort}\n{adapter.Name}";
-                tray.Text = text.Length > 63 ? text.Substring(0, 63) : text; // NotifyIcon.Text limit
+                tray.Text = StatusText(adapter, preset);
             }
             catch
             {
@@ -94,7 +105,7 @@ namespace FastSwitchDNS
             old?.Dispose();
         }
 
-        void BuildMenu()
+        internal void BuildMenu()
         {
             menu.Items.Clear();
             var presets = Presets.All();
@@ -109,7 +120,7 @@ namespace FastSwitchDNS
             menu.Items.Add(new ToolStripSeparator());
 
             var auto = new ToolStripMenuItem(L.Auto) { Checked = adapter != null && active == null };
-            auto.Click += (s, e) => Switch(null);
+            auto.Click += (s, e) => _ = Switch(null);
             menu.Items.Add(auto);
 
             bool customStarted = false;
@@ -127,14 +138,14 @@ namespace FastSwitchDNS
                     ShortcutKeyDisplayString = p.V4.FirstOrDefault() ?? p.Servers.FirstOrDefault(),
                     Image = Swatch(IconFactory.ColorFor(p)),
                 };
-                item.Click += (s, e) => Switch(preset);
+                item.Click += (s, e) => _ = Switch(preset);
                 menu.Items.Add(item);
             }
 
             menu.Items.Add(new ToolStripSeparator());
 
             var add = new ToolStripMenuItem(L.AddCustom);
-            add.Click += (s, e) => AddCustom();
+            add.Click += (s, e) => _ = AddCustom();
             menu.Items.Add(add);
 
             var customs = presets.Where(p => !p.BuiltIn).ToList();
@@ -156,7 +167,7 @@ namespace FastSwitchDNS
             flush.Click += (s, e) =>
             {
                 DnsManager.FlushCache();
-                tray.ShowBalloonTip(1500, "FastSwitchDNS", L.CacheFlushed, ToolTipIcon.Info);
+                Notify("FastSwitchDNS", L.CacheFlushed, false);
             };
             menu.Items.Add(flush);
 
@@ -175,12 +186,12 @@ namespace FastSwitchDNS
         ToolStripMenuItem BuildAdapterMenu()
         {
             var root = new ToolStripMenuItem(L.Adapter);
-            var selected = SelectedAdapterId;
+            var selected = Settings.AdapterId;
             var adapters = DnsManager.Adapters();
             bool selectedPresent = adapters.Any(a => a.Id == selected);
 
             var all = new ToolStripMenuItem(L.AllActive) { Checked = !selectedPresent };
-            all.Click += (s, e) => { SelectedAdapterId = ""; RefreshStatus(); };
+            all.Click += (s, e) => { Settings.AdapterId = ""; RefreshStatus(); };
             root.DropDownItems.Add(all);
             root.DropDownItems.Add(new ToolStripSeparator());
 
@@ -192,7 +203,7 @@ namespace FastSwitchDNS
                     Checked = id == selected,
                     ToolTipText = a.Description,
                 };
-                item.Click += (s, e) => { SelectedAdapterId = id; RefreshStatus(); };
+                item.Click += (s, e) => { Settings.AdapterId = id; RefreshStatus(); };
                 root.DropDownItems.Add(item);
             }
             return root;
@@ -208,34 +219,36 @@ namespace FastSwitchDNS
             return bmp;
         }
 
-        void AddCustom()
+        internal async Task AddCustom()
         {
-            using var form = new AddDnsForm();
-            if (form.ShowDialog() != DialogResult.OK) return;
-            Presets.AddCustom(form.Result);
-            if (form.ApplyNow) Switch(form.Result);
+            var answer = AskCustom();
+            if (answer == null) return;
+            Presets.AddCustom(answer.Value.preset);
+            if (answer.Value.applyNow) await Switch(answer.Value.preset);
             else RefreshStatus();
         }
 
-        async void Switch(DnsPreset preset)
+        /// <summary>Applies <paramref name="preset"/> (null = DHCP) to every target adapter; returns the errors, or null.</summary>
+        internal static string ApplyToAll(IEnumerable<AdapterInfo> targets, DnsPreset preset)
+        {
+            var errors = new List<string>();
+            foreach (var t in targets)
+            {
+                try { DnsManager.Apply(t, preset?.Servers); }
+                catch (Exception ex) { errors.Add(ex.Message); }
+            }
+            DnsManager.FlushCache();
+            return errors.Count > 0 ? string.Join("\n", errors) : null;
+        }
+
+        internal async Task Switch(DnsPreset preset)
         {
             if (busy) return;
             busy = true;
             tray.Text = L.Applying;
-            string error = null;
-            var targets = DnsManager.Targets(SelectedAdapterId);
+            var targets = DnsManager.Targets(Settings.AdapterId);
 
-            await Task.Run(() =>
-            {
-                var errors = new List<string>();
-                foreach (var t in targets)
-                {
-                    try { DnsManager.Apply(t, preset?.Servers); }
-                    catch (Exception ex) { errors.Add(ex.Message); }
-                }
-                DnsManager.FlushCache();
-                if (errors.Count > 0) error = string.Join("\n", errors);
-            });
+            var error = await Task.Run(() => ApplyToAll(targets, preset));
 
             busy = false;
             currentIconKey = null; // force redraw
@@ -244,19 +257,28 @@ namespace FastSwitchDNS
             if (error != null)
                 ShowError(error);
             else
-                tray.ShowBalloonTip(1500, "FastSwitchDNS",
-                    $"DNS: {preset?.Name ?? L.Auto}\n{string.Join(", ", targets.Select(t => t.Name))}",
-                    ToolTipIcon.Info);
+                Notify("FastSwitchDNS",
+                    $"DNS: {preset?.Name ?? L.Auto}\n{string.Join(", ", targets.Select(t => t.Name))}", false);
+        }
+
+        void Notify(string title, string text, bool error)
+        {
+            LastNotice = (title, text, error);
+            if (live)
+                tray.ShowBalloonTip(error ? 5000 : 1500, title, text, error ? ToolTipIcon.Error : ToolTipIcon.Info);
         }
 
         void ShowError(string message) =>
-            tray.ShowBalloonTip(5000, L.Error, message.Length > 250 ? message.Substring(0, 250) : message, ToolTipIcon.Error);
+            Notify(L.Error, message.Length > 250 ? message.Substring(0, 250) : message, true);
 
         protected override void ExitThreadCore()
         {
+            if (live) NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
             refreshTimer.Stop();
+            refreshTimer.Dispose();
             tray.Visible = false;
             tray.Dispose();
+            menu.Dispose();
             currentIcon?.Dispose();
             base.ExitThreadCore();
         }
