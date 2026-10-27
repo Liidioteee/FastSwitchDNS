@@ -100,6 +100,7 @@ namespace FastSwitchDNS.Tests
             Env.CurrentUser = () => @"PC\User";
             Env.ExecutablePath = () => @"C:\Apps\FastSwitchDNS.exe";
             L.Culture = CultureInfo.InvariantCulture; // English strings
+            SetWindowsBuild("22631"); // Windows 11 23H2 unless a test says otherwise
         }
 
         public void Dispose()
@@ -126,6 +127,13 @@ namespace FastSwitchDNS.Tests
             Id = id, Name = "WireGuard Tunnel", Description = "WireGuard Tunnel", Type = NetworkInterfaceType.Ethernet,
             IsUp = true, SupportsIPv4 = true, SupportsIPv6 = true, HasGateway = true,
         };
+
+        /// <summary>Pretends to run on the given Windows build (null = value missing).</summary>
+        internal void SetWindowsBuild(string build) =>
+            Registry.SetValue(RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+                "CurrentBuildNumber", build, RegistryValueKind.String);
+
+        internal const string Windows10 = "19045";
 
         /// <summary>Puts static DNS servers into the fake registry, as netsh would.</summary>
         internal void SetStatic(AdapterInfo a, string v4, string v6 = null)

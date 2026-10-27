@@ -239,6 +239,15 @@ namespace FastSwitchDNS.Tests
         }
 
         [Fact]
+        public void WindowsBuild_IsReadableFromRealRegistry()
+        {
+            var build = new WindowsRegistry().GetValue(RegistryHive.LocalMachine,
+                @"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentBuildNumber") as string;
+            Assert.True(int.TryParse(build, out var number) && number >= 10240, build); // 10240 = first Windows 10
+            Assert.Equal(number >= DnsManager.DohMinBuild, DnsManager.DohSupported());
+        }
+
+        [Fact]
         public void AdapterInfo_FromSystem_ListsAdapters()
         {
             var list = AdapterInfo.FromSystem().ToList();

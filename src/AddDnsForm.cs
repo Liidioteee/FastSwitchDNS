@@ -60,7 +60,9 @@ namespace FastSwitchDNS
             table.Controls.Add(new Label());
             table.Controls.Add(extra);
 
-            Row(L.DohLabel, doh, L.DohHint);
+            // Windows 10 can't use a DoH template, so don't ask for one
+            if (DnsManager.DohSupported())
+                Row(L.DohLabel, doh, L.DohHint);
 
             var buttons = new FlowLayoutPanel
             {

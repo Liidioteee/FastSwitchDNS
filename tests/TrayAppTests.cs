@@ -88,6 +88,40 @@ namespace FastSwitchDNS.Tests
         });
 
         [Fact]
+        public void Menu_Windows10_HasNoDohItemsOrMarkers() => Ui(() =>
+        {
+            SetWindowsBuild(Windows10);
+            using var app = NewApp();
+            Assert.Equal(new[]
+            {
+                "Wi-Fi: Auto", "---",
+                "Automatic (DHCP)", "Cloudflare", "Google", "Quad9", "AdGuard", "OpenDNS", "---",
+                "Add custom DNS…", "---",
+                "Adapter", "Flush DNS cache", "Run at Windows logon", "---", "Exit",
+            }, Texts(app));
+            Assert.Equal("1.1.1.1", Item(app, "Cloudflare").ShortcutKeyDisplayString);
+            Assert.Null(Item(app, "Cloudflare").ToolTipText);
+        });
+
+        [Fact]
+        public void Switch_Windows10_PlainDnsAndNoError() => Ui(async () =>
+        {
+            SetWindowsBuild(Windows10);
+            var plain = Runner.Handler;
+            Runner.Handler = (f, a) => a.StartsWith("dns ") ? (1, "The following command was not found") : plain(f, a);
+            using var app = NewApp();
+
+            await app.Switch(Presets.BuiltIn[0]);
+
+            Assert.Equal(("FastSwitchDNS", "DNS: Cloudflare\nWi-Fi", false), app.LastNotice);
+            Assert.Equal("DNS: Cloudflare\nWi-Fi", app.TrayText);
+            Assert.DoesNotContain(Runner.Args("netsh.exe"), a => a.StartsWith("dns "));
+            app.BuildMenu();
+            Assert.Equal("Wi-Fi: Cloudflare", app.Menu.Items[0].Text);
+            Assert.True(Item(app, "Cloudflare").Checked);
+        });
+
+        [Fact]
         public void Menu_NoAdapters() => Ui(() =>
         {
             AdapterList.Clear();

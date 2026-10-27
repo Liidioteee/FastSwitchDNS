@@ -69,6 +69,24 @@ namespace FastSwitchDNS.Tests
         });
 
         [Fact]
+        public void Form_Windows10_HasNoDohField() => Ui(() =>
+        {
+            SetWindowsBuild(Windows10);
+            using var form = new AddDnsForm();
+            var labels = new List<string>();
+            void Walk(Control c) { foreach (Control x in c.Controls) { if (x is Label) labels.Add(x.Text); Walk(x); } }
+            Walk(form);
+            Assert.Contains("Primary DNS:", labels);
+            Assert.DoesNotContain("DoH template:", labels);
+
+            form.NameBox.Text = "Home";
+            form.PrimaryBox.Text = "1.2.3.4";
+            form.Submit(applyNow: false);
+            Assert.Equal(DialogResult.OK, form.DialogResult);
+            Assert.Null(form.Result.DohTemplate);
+        });
+
+        [Fact]
         public void Submit_Valid_SetsResultAndCloses() => Ui(() =>
         {
             using var form = new AddDnsForm();

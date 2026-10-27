@@ -132,6 +132,20 @@ namespace FastSwitchDNS
             }
         }
 
+        /// <summary>
+        /// First Windows build whose system resolver can do DNS over HTTPS: Windows Server 2022 (20348).
+        /// Windows 11 starts at 22000; Windows 10 (up to 19045) has no DoH.
+        /// </summary>
+        public const int DohMinBuild = 20348;
+
+        /// <summary>True on Windows 11 / Server 2022 and later. Unknown build counts as unsupported.</summary>
+        public static bool DohSupported()
+        {
+            var build = Env.Registry.GetValue(RegistryHive.LocalMachine,
+                @"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "CurrentBuildNumber") as string;
+            return int.TryParse(build, out var number) && number >= DohMinBuild;
+        }
+
         const string DnscacheInterfaces = @"SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters";
 
         /// <summary>Per-adapter DoH settings key, the same one the Windows Settings app writes.</summary>
@@ -154,7 +168,8 @@ namespace FastSwitchDNS
                 errors.Add(ex.Message);
                 return;
             }
-            if (string.IsNullOrEmpty(template)) return;
+            // Windows 10 has no DoH: plain DNS only, without "unknown command" errors from netsh
+            if (string.IsNullOrEmpty(template) || !DohSupported()) return;
 
             foreach (var (servers, v6Family) in new[] { (v4, false), (v6, true) })
             foreach (var ip in servers)

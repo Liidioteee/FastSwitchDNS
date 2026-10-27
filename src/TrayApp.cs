@@ -110,6 +110,8 @@ namespace FastSwitchDNS
             menu.Items.Clear();
             var presets = Presets.All();
             var (adapter, active) = CurrentState(presets);
+            bool dohSupported = DnsManager.DohSupported();
+            bool dohOn = dohSupported && Settings.DohEnabled;
 
             bool dohActive = adapter != null && active != null && DnsManager.IsDohActive(adapter);
             var header = new ToolStripMenuItem(adapter == null
@@ -137,8 +139,8 @@ namespace FastSwitchDNS
                 {
                     Checked = active == p,
                     ShortcutKeyDisplayString = (p.V4.FirstOrDefault() ?? p.Servers.FirstOrDefault()) +
-                                               (p.HasDoh && Settings.DohEnabled ? " · " + L.Doh : ""),
-                    ToolTipText = p.HasDoh ? p.DohTemplate : null,
+                                               (p.HasDoh && dohOn ? " · " + L.Doh : ""),
+                    ToolTipText = p.HasDoh && dohSupported ? p.DohTemplate : null,
                     Image = Swatch(IconFactory.ColorFor(p)),
                 };
                 item.Click += (s, e) => _ = Switch(preset);
@@ -166,17 +168,20 @@ namespace FastSwitchDNS
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(BuildAdapterMenu());
 
-            var doh = new ToolStripMenuItem(L.DohToggle) { Checked = Settings.DohEnabled };
-            doh.Click += (s, e) => { Settings.DohEnabled = !Settings.DohEnabled; _ = Reapply(active, presets); };
-            menu.Items.Add(doh);
-
-            var fallback = new ToolStripMenuItem(L.DohFallback)
+            if (dohSupported)
             {
-                Checked = Settings.DohFallback,
-                Enabled = Settings.DohEnabled,
-            };
-            fallback.Click += (s, e) => { Settings.DohFallback = !Settings.DohFallback; _ = Reapply(active, presets); };
-            menu.Items.Add(fallback);
+                var doh = new ToolStripMenuItem(L.DohToggle) { Checked = Settings.DohEnabled };
+                doh.Click += (s, e) => { Settings.DohEnabled = !Settings.DohEnabled; _ = Reapply(active, presets); };
+                menu.Items.Add(doh);
+
+                var fallback = new ToolStripMenuItem(L.DohFallback)
+                {
+                    Checked = Settings.DohFallback,
+                    Enabled = Settings.DohEnabled,
+                };
+                fallback.Click += (s, e) => { Settings.DohFallback = !Settings.DohFallback; _ = Reapply(active, presets); };
+                menu.Items.Add(fallback);
+            }
 
             var flush = new ToolStripMenuItem(L.FlushCache);
             flush.Click += (s, e) =>
@@ -267,7 +272,7 @@ namespace FastSwitchDNS
             busy = true;
             tray.Text = L.Applying;
             var targets = DnsManager.Targets(Settings.AdapterId);
-            bool doh = Settings.DohEnabled, fallback = Settings.DohFallback;
+            bool doh = Settings.DohEnabled && DnsManager.DohSupported(), fallback = Settings.DohFallback;
 
             var error = await Task.Run(() => ApplyToAll(targets, preset, doh, fallback));
 

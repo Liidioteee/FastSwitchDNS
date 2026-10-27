@@ -343,6 +343,37 @@ namespace FastSwitchDNS.Tests
             Assert.False(DnsManager.IsDohActive(wifi));
         }
 
+        [Theory]
+        [InlineData("19045", false)] // Windows 10 22H2
+        [InlineData("19041", false)] // Windows 10 2004
+        [InlineData("20348", true)]  // Windows Server 2022
+        [InlineData("22000", true)]  // Windows 11 21H2
+        [InlineData("26100", true)]  // Windows 11 24H2
+        [InlineData("", false)]
+        [InlineData("abc", false)]
+        [InlineData(null, false)]
+        public void DohSupported_ByBuild(string build, bool supported)
+        {
+            SetWindowsBuild(build);
+            Assert.Equal(supported, DnsManager.DohSupported());
+        }
+
+        [Fact]
+        public void Apply_Windows10_SetsPlainDnsWithoutDohCommandsOrErrors()
+        {
+            SetWindowsBuild(Windows10);
+            // netsh on Windows 10 has no "dns ... encryption" command
+            Runner.Handler = (f, a) => a.StartsWith("dns ") ? (1, "The following command was not found") : (0, "");
+            var wifi = Wifi();
+
+            DnsManager.Apply(wifi, Presets.BuiltIn[0].Servers, Presets.BuiltIn[0].DohTemplate);
+
+            Assert.Contains("interface ipv4 set dnsservers name=\"Wi-Fi\" source=static address=1.1.1.1 register=primary validate=no",
+                Runner.Args("netsh.exe"));
+            Assert.DoesNotContain(Runner.Args("netsh.exe"), a => a.StartsWith("dns "));
+            Assert.Null(DohFlags(wifi, "1.1.1.1"));
+        }
+
         [Fact]
         public void FlushCache_RunsIpconfig()
         {
