@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <!-- The whole suite takes a few seconds; stop a hung run instead of waiting forever -->
+    <TestSessionTimeout>120000</TestSessionTimeout>
+  </RunConfiguration>
+</RunSettings>
